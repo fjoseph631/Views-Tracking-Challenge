@@ -1,61 +1,59 @@
 import * as functions from "firebase-functions";
-import {db} from "./index";
+import { firestore } from "firebase-admin";
+import { db } from "./index";
+
 
 /* BONUS OPPORTUNITY
 It's not great (it's bad) to throw all of this code in one file.
 Can you help us organize this code better?
 */
 
-
-export interface Recording {
-    id: string; // matches document id in firestore
-    creatorId: string; // id of the user that created this recording
-    uniqueViewCount: number;
-}
-
-export interface User {
-    id: string; // mathes both the user's document id
-    uniqueRecordingViewCount: number; // sum of all recording views
-}
-
-export enum Collections {
-    Users = "Users",
-    Recordings = "Recordings"
-}
-
 export async function trackRecordingView(viewerId: string, recordingId: string): Promise<void> {
-  // TODO: implement this function
-
-  // logs can be viewed in the firebase emulator ui
-  functions.logger.debug("viewerId: ", viewerId);
-  functions.logger.debug("recordingId: ", recordingId);
-
-
-  // ATTN: the rest of the code in this file is only here to show how firebase works
-
-  // read from a document
-  const documentSnapshot = await db.collection("collection").doc("doc").get();
-  if (documentSnapshot.exists) {
-    const data = documentSnapshot.data();
-    functions.logger.debug("it did exist!", data);
-  } else {
-    functions.logger.debug("it didn't exist");
+  // verifying viewing user exists
+  const viewingUserSnapshot = await db.collection("Users").doc(viewerId).get();
+  if (!viewingUserSnapshot.exists) {
+    functions.logger.debug("viewing user does not exist");
+    return;
   }
-
-  // overwrite a document based on the data you have when sending the write request
-  // set overwrites all existing fields and creates new documents if necessary
-  await db.collection("collection").doc("doc").set({id: "id", field: "foo"});
-  // update will fail if the document exists and will only update fields included
-  // in your update
-  await db.collection("collection").doc("doc").update({id: "id", field: "bar"});
-
-  // update based on data inside the document at the time of the write using a transaction
-  // https://firebase.google.com/docs/firestore/manage-data/transactions#web-version-9
-
-  await db.runTransaction(async (t): Promise<void> => {
-    const ref = db.collection("collection").doc("doc");
-    const docSnapshot = await t.get(ref);
-    // do something with the data
-    t.set(ref, {id: "id", field: "foobar"});
-  });
+  // verifying recording exists in firestore
+  const recordingSnapshot = await db.collection("Recordings").doc(recordingId).get();
+  if (recordingSnapshot.exists) {
+    const recordingData = recordingSnapshot.data();
+    if (recordingData !== undefined) {
+      // get user data of recording
+      const recordingUserSnapshot = await db.collection("Users").doc(recordingData.creatorId).get();
+      if (!recordingUserSnapshot.exists) {
+        functions.logger.debug("Recording user does not exist");
+        return;
+      }
+      // querying viewers subcollection based on id 
+      const viewsRecordingUserSnapshot = await db.collection("Recordings").doc(recordingId).collection("Viewers").where('id', '==', viewerId).get()
+      if (viewsRecordingUserSnapshot.empty) {
+        functions.logger.debug("Viewer not found in recording subcollection");
+        // adding new viewer to recording's viewer subcollection
+        await db.collection("Recordings").doc(recordingId).collection("Viewers").add({
+          id: viewerId,
+        });
+      }
+      else {
+        functions.logger.debug("Viewer found in recording subcollection");
+        return;
+      }
+      // update document with incremented uniuqeViewCount
+      await db.collection("Recordings").doc(recordingId).update({
+        id: recordingData.id,
+        uniqueViewCount: firestore.FieldValue.increment(1)
+      });
+      // update document with incremented uniuqueRecordingViewCount
+      const recordingUserData = recordingUserSnapshot.data();
+      if (recordingUserData !== undefined) {
+        await db.collection("Users").doc(recordingUserData.id).update({
+          id: recordingUserData.id,
+          uniqueRecordingViewCount: firestore.FieldValue.increment(1)
+        });
+      }
+    }
+  } else {
+    functions.logger.debug("recording didn't exist");
+  }
 }
