@@ -8,3 +8,24 @@ List each case below in plain english with it's expected result.
 For example...
 Case: user a views user b's recording x for the first time
 Expected Result: etc etc
+
+Case: User A views User B's recording A for the first time
+Expected Result: recordingA viewCount is now 1
+
+Case: User A views User B's recording A for the second time
+Expected Result: recordingA viewCount is now 1
+
+Case: User B views User A's recording B for the second time
+Expected Result: recordingB viewCount is now 1
+
+Case: User B views User A's recording NonExisting for the second time
+Expected Result: error, recording doesn't exist
+
+Case: User Q views User A's recording NonExisting for the second time
+Expected Result: error, viewer doesn't exist
+
+Case: User B views User B's recording A for the first time
+Expected Result: recordingA viewCount remains at 1
+
+Case: User B views User A's recording C for the first time
+Expected Result: User A's total recording view count is incremented to 2
