@@ -1,5 +1,4 @@
 import * as functions from "firebase-functions";
-import { firestore } from "firebase-admin";
 import { db } from "./index";
 
 
@@ -16,12 +15,14 @@ export async function trackRecordingView(viewerId: string, recordingId: string):
     return;
   }
   // verifying recording exists in firestore
-  const recordingSnapshot = await db.collection("Recordings").doc(recordingId).get();
+  const recordingRef = await db.collection("Recordings").doc(recordingId);
+  const recordingSnapshot = await recordingRef.get();
   if (recordingSnapshot.exists) {
     const recordingData = recordingSnapshot.data();
     if (recordingData !== undefined) {
       // get user data of recording
-      const recordingUserSnapshot = await db.collection("Users").doc(recordingData.creatorId).get();
+      const recordingUserRef = await db.collection("Users").doc(recordingData.creatorId);
+      const recordingUserSnapshot = await recordingUserRef.get();
       if (!recordingUserSnapshot.exists) {
         functions.logger.debug("Recording user does not exist");
         return;
@@ -29,28 +30,34 @@ export async function trackRecordingView(viewerId: string, recordingId: string):
       // querying viewers subcollection based on id 
       const viewsRecordingUserSnapshot = await db.collection("Recordings").doc(recordingId).collection("Viewers").where('id', '==', viewerId).get()
       if (viewsRecordingUserSnapshot.empty) {
-        functions.logger.debug("Viewer not found in recording subcollection");
         // adding new viewer to recording's viewer subcollection
         await db.collection("Recordings").doc(recordingId).collection("Viewers").add({
           id: viewerId,
         });
       }
       else {
-        functions.logger.debug("Viewer found in recording subcollection");
+        functions.logger.debug("Viewer has already seen this recording");
         return;
       }
-      // update document with incremented uniuqeViewCount
-      await db.collection("Recordings").doc(recordingId).update({
-        id: recordingData.id,
-        uniqueViewCount: firestore.FieldValue.increment(1)
-      });
-      // update document with incremented uniuqueRecordingViewCount
-      const recordingUserData = recordingUserSnapshot.data();
-      if (recordingUserData !== undefined) {
-        await db.collection("Users").doc(recordingUserData.id).update({
-          id: recordingUserData.id,
-          uniqueRecordingViewCount: firestore.FieldValue.increment(1)
+      // updating user with incremented uniuqueRecordingViewCount and recording's uniqueViewCount
+      // updating using a transaction to confirm updates are both done at the same time
+      try {
+        await db.runTransaction(async (t) => {
+          const recordingDoc = await t.get(recordingRef);
+          const recordingLockedData = await recordingDoc.data();
+          const userDoc = await t.get(recordingUserRef);
+          const userLockedData = await userDoc.data();
+          if (recordingLockedData !== undefined) {
+            t.update(recordingRef, { uniqueViewCount: recordingLockedData.uniqueViewCount + 1 });
+          }
+          if (userLockedData !== undefined) {
+            t.update(recordingUserRef, { uniqueRecordingViewCount: userLockedData.uniqueRecordingViewCount + 1 })
+          }
         });
+
+        console.log('Transaction success!');
+      } catch (e) {
+        console.log('Transaction failure:', e);
       }
     }
   } else {
